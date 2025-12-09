@@ -16,7 +16,7 @@ from .resume_library import (
     ResumeLibraryBatchDeleteView,
     ResumeLibraryCheckHashView
 )
-from .dev_tools import GenerateRandomResumesView
+from .dev_tools import GenerateRandomResumesView, ForceScreeningErrorView, ResetScreeningTestStateView
 
 __all__ = [
     'ResumeScreeningView',
@@ -40,4 +40,6 @@ __all__ = [
     'ResumeLibraryCheckHashView',
     # 开发测试工具
     'GenerateRandomResumesView',
+    'ForceScreeningErrorView',
+    'ResetScreeningTestStateView',
 ]

@@ -148,6 +148,94 @@ class ReportService:
         return report
     
     @classmethod
+    def save_or_update_resume_data(
+        cls,
+        task,
+        position_data: Dict,
+        candidate_name: str,
+        resume_content: str,
+        screening_result: Dict = None
+    ):
+        """
+        将简历数据保存到统一管理表，如果已存在则更新筛选结果。
+        
+        参数:
+            task: ResumeScreeningTask实例
+            position_data: 岗位信息
+            candidate_name: 候选人名称
+            resume_content: 简历内容
+            screening_result: 包含分数和报告的筛选结果（可选）
+            
+        返回:
+            tuple: (ResumeData实例, 是否为新创建)
+        """
+        from ..models import ResumeData
+        from apps.common.utils import generate_hash
+        
+        # 生成哈希：仅基于简历内容，相同内容的简历会有相同哈希值用于去重
+        resume_hash = generate_hash(resume_content)
+        
+        # 检查是否已存在相同哈希的简历
+        existing = ResumeData.objects.filter(resume_file_hash=resume_hash).first()
+        
+        if existing:
+            # 如果存在，更新关联任务和筛选结果（如果有）
+            if existing.task is None:  # 只有在没有关联任务时才更新
+                existing.task = task
+                existing.save()
+            
+            # 如果提供了筛选结果，更新相关字段
+            if screening_result:
+                existing.screening_score = screening_result.get('scores', {})
+                existing.screening_summary = screening_result.get('summary', '')
+                existing.json_report_content = screening_result.get('json_content', '')
+                
+                # 保存报告文件（如果提供）
+                md_content = screening_result.get('md_content')
+                if md_content:
+                    md_filename = f"{sanitize_filename(candidate_name)}简历初筛结果.md"
+                    existing.report_md_file.save(md_filename, ContentFile(md_content.encode('utf-8')), save=False)
+                
+                json_content = screening_result.get('json_content')
+                if json_content:
+                    json_filename = f"{sanitize_filename(candidate_name)}.json"
+                    existing.report_json_file.save(json_filename, ContentFile(json_content.encode('utf-8')), save=False)
+                
+                existing.save()  # 保存所有更改
+                logger.info(f"更新现有简历数据（哈希: {resume_hash[:8]}...）的筛选结果")
+            
+            return existing, False  # 返回现有记录，标记为非新建
+        
+        # 创建新记录
+        resume_data = ResumeData.objects.create(
+            task=task,
+            position_title=position_data.get('position', '未知职位'),
+            position_details=position_data,
+            candidate_name=candidate_name,
+            resume_content=resume_content,
+            resume_file_hash=resume_hash,
+            screening_score=screening_result.get('scores', {}) if screening_result else {},
+            screening_summary=screening_result.get('summary', '') if screening_result else '',
+            json_report_content=screening_result.get('json_content', '') if screening_result else ''
+        )
+        
+        # 如果提供了内容则保存报告文件
+        if screening_result:
+            md_content = screening_result.get('md_content')
+            if md_content:
+                md_filename = f"{sanitize_filename(candidate_name)}简历初筛结果.md"
+                resume_data.report_md_file.save(md_filename, ContentFile(md_content.encode('utf-8')), save=False)
+            
+            json_content = screening_result.get('json_content')
+            if json_content:
+                json_filename = f"{sanitize_filename(candidate_name)}.json"
+                resume_data.report_json_file.save(json_filename, ContentFile(json_content.encode('utf-8')), save=False)
+            
+            resume_data.save()  # 保存文件字段
+        
+        return resume_data, True  # 返回新创建的记录，标记为新建
+
+    @classmethod
     def save_resume_data(
         cls,
         task,
@@ -169,40 +257,10 @@ class ReportService:
         返回:
             tuple: (ResumeData实例, 是否为新创建)
         """
-        from ..models import ResumeData
-        from apps.common.utils import generate_hash
-        
-        # 生成哈希：仅基于简历内容，相同内容的简历会有相同哈希值用于去重
-        resume_hash = generate_hash(resume_content)
-        
-        # 检查是否已存在相同哈希的简历
-        existing = ResumeData.objects.filter(resume_file_hash=resume_hash).first()
-        if existing:
-            logger.info(f"简历已存在（哈希: {resume_hash[:8]}...），跳过重复保存，返回现有记录")
-            return existing, False  # 返回现有记录，标记为非新建
-        
-        # 创建新记录
-        resume_data = ResumeData.objects.create(
+        return cls.save_or_update_resume_data(
             task=task,
-            position_title=position_data.get('position', '未知职位'),
-            position_details=position_data,
+            position_data=position_data,
             candidate_name=candidate_name,
             resume_content=resume_content,
-            resume_file_hash=resume_hash,
-            screening_score=screening_result.get('scores', {}),
-            screening_summary=screening_result.get('summary', ''),
-            json_report_content=screening_result.get('json_content', '')
+            screening_result=screening_result
         )
-        
-        # 如果提供了内容则保存报告文件
-        md_content = screening_result.get('md_content')
-        if md_content:
-            md_filename = f"{sanitize_filename(candidate_name)}简历初筛结果.md"
-            resume_data.report_md_file.save(md_filename, ContentFile(md_content.encode('utf-8')))
-        
-        json_content = screening_result.get('json_content')
-        if json_content:
-            json_filename = f"{sanitize_filename(candidate_name)}.json"
-            resume_data.report_json_file.save(json_filename, ContentFile(json_content.encode('utf-8')))
-        
-        return resume_data, True  # 返回新创建的记录，标记为新建

@@ -51,9 +51,12 @@ class TaskHistoryView(SafeAPIView):
             if task.status == 'running' and task.current_speaker:
                 data['current_speaker'] = task.current_speaker
             
+            # 无论任务状态如何，都获取简历数据
+            data['resume_data'] = self._get_resume_data(task)
+            
+            # 如果已完成则添加结果
             if task.status == 'completed':
                 data['reports'] = self._get_reports(task)
-                data['resume_data'] = self._get_resume_data(task)
             
             if task.status == 'failed' and task.error_message:
                 data['error_message'] = task.error_message

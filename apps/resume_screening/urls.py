@@ -23,6 +23,8 @@ from .views import (
     ResumeLibraryBatchDeleteView,
     ResumeLibraryCheckHashView,
     GenerateRandomResumesView,
+    ForceScreeningErrorView,
+    ResetScreeningTestStateView,
 )
 
 app_name = 'resume_screening'
@@ -68,5 +70,10 @@ urlpatterns = [
     path('library/check-hash/', ResumeLibraryCheckHashView.as_view(), name='library-check-hash'),
     
     # 开发测试工具 API
+    # AI生成简历测试
     path('dev/generate-resumes/', GenerateRandomResumesView.as_view(), name='dev-generate-resumes'),
+    # 开启强制返回筛选错误错误
+    path('dev/force-screening-error/', ForceScreeningErrorView.as_view(), name='dev-force-error'),
+    # 关闭强制返回筛选错误
+    path('dev/reset-test-state/', ResetScreeningTestStateView.as_view(), name='dev-reset-state'),
 ]

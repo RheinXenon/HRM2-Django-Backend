@@ -46,6 +46,18 @@ class ResumeScreeningView(SafeAPIView):
                 position_data=position_data
             )
             
+            # 立即保存简历数据，确保即使任务失败也能获取简历内容
+            from apps.common.utils import extract_name_from_filename
+            for resume in resumes_data:
+                candidate_name = extract_name_from_filename(resume['name'])
+                ReportService.save_or_update_resume_data(
+                    task=task,
+                    position_data=position_data,
+                    candidate_name=candidate_name,
+                    resume_content=resume['content'],
+                    screening_result=None  # 初始时没有筛选结果
+                )
+            
             # 启动异步任务（使用Celery或线程）
             self._start_screening_task(task, position_data, resumes_data)
             
@@ -76,8 +88,26 @@ class ResumeScreeningView(SafeAPIView):
     def _run_screening_sync(self, task, position_data, resumes_data):
         """同步运行筛选（用于线程回退）。"""
         from apps.common.utils import extract_name_from_filename
+        from django.core.cache import cache
         
         try:
+            # 检查是否设置了强制错误标志（测试钩子）
+            error_config = cache.get('test_force_screening_error')
+            if error_config and error_config.get('active', False):
+                error_message = error_config.get('message', '测试：强制触发的简历筛选任务失败')
+                error_type = error_config.get('type', 'runtime')
+                
+                logger.info(f"Force error trigger: {error_message} (type: {error_type})")
+                
+                if error_type == 'validation':
+                    from apps.common.exceptions import ValidationException
+                    raise ValidationException(error_message)
+                elif error_type == 'service':
+                    from apps.common.exceptions import ServiceException
+                    raise ServiceException(error_message)
+                else:  # runtime
+                    raise RuntimeError(error_message)
+            
             task.status = 'running'
             task.save()
             
@@ -96,18 +126,19 @@ class ResumeScreeningView(SafeAPIView):
                 candidate_name = extract_name_from_filename(resume['name'])
                 result = results.get(candidate_name, {})
                 
-                if result:
-                    resume_data, is_new = ReportService.save_resume_data(
-                        task=task,
-                        position_data=position_data,
-                        candidate_name=candidate_name,
-                        resume_content=resume['content'],
-                        screening_result=result
-                    )
-                    if is_new:
-                        new_count += 1
-                    else:
-                        duplicate_count += 1
+                # 更新或创建简历数据（即使没有结果也要确保简历数据存在）
+                resume_data, is_new = ReportService.save_or_update_resume_data(
+                    task=task,
+                    position_data=position_data,
+                    candidate_name=candidate_name,
+                    resume_content=resume['content'],
+                    screening_result=result if result else None
+                )
+                
+                if is_new:
+                    new_count += 1
+                else:
+                    duplicate_count += 1
             
             # 记录统计信息
             if duplicate_count > 0:
@@ -150,10 +181,12 @@ class ScreeningTaskStatusView(SafeAPIView):
         if task.status == 'running' and task.current_speaker:
             response_data['current_speaker'] = task.current_speaker
         
-        # 如果已完成则添加结果
-        if task.status == 'completed':
-            response_data['reports'] = self._get_reports(task)
+            # 无论任务状态如何，都获取简历数据
             response_data['resume_data'] = self._get_resume_data(task)
+            
+            # 如果已完成则添加结果
+            if task.status == 'completed':
+                response_data['reports'] = self._get_reports(task)
         
         # 如果失败则添加错误信息
         if task.status == 'failed' and task.error_message:
